@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from typing import Optional
 from einops import rearrange
 
-
+# FIXME: temporal attention could be chosen to sigmoid activated
 class SpatialTemporalEncoderLayer(nn.Module):
     def __init__(self, d_model: int, n_heads: int = 8, dim_feedforward: int = 2048, dropout=0.1,
                  activation="relu", use_temporal_attn: bool = True):
