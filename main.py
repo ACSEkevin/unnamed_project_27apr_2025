@@ -3,7 +3,7 @@ import argparse
 import torch, os
 from torch.utils.data import DataLoader, DistributedSampler
 
-from src.models import UnnamedModel
+from src.models import UnnamedModel, load_states_from_pretrained_detr
 from src.losses import CollectiveLoss
 from src.datasets import TAOAmodalDataset, PseudoDataSet, build_tao_transform, collate_fn_tao
 from src.utils import misc as utils
@@ -51,6 +51,10 @@ def get_args_parser():
                         help="path to tensorboard log, if not given, does not write log / summary.")
 
     # model configs
+    parser.add_argument('--init_state', nargs="?", const=True, default=False,
+                        help="load partial weights from pretrained DETR model (transformer attention, box embed head etc.). \
+                            One can pass an url or a path to DETR state dictionary, or does not pass any following value, \
+                            in which case weights will be downloaded automatically.")
     ## backbone
     parser.add_argument('--backbone', default='resnet50', type=str,
                         help="Name of the convolutional backbone to use")
@@ -112,6 +116,7 @@ def main(args: argparse.Namespace):
     device = torch.device(args.device)
     freeze_backbone = args.lr_backbone <= 0.
     use_focal = args.focal_alpha > 0.
+
     utils.init_distributed_mode(args)
 
 
@@ -123,7 +128,12 @@ def main(args: argparse.Namespace):
                          dim_ffn=args.dim_feedforward, num_queries=args.num_queries, update_track_query_pos=args.update_track_pos,
                          backbone_name=args.backbone, freeze_backbone=freeze_backbone, backbone_dilation=args.dilation,
                          dropout=args.dropout, aux_output=args.no_aux_output)
+    
+    if args.init_state: # True or class <str>
+        path = None if isinstance(path, bool) else args.init_state
+        model = load_states_from_pretrained_detr(model, path, num_enc=args.enc_layers, num_dec=args.dec_layers, load_backbone_state=False)
     model.to(device)
+
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     ram = n_params * 4 / 1024 ** 2
     print("num of trainable params: {:.2f}M({:.1f}MB)".format(n_params / 1e6, ram))
@@ -136,6 +146,7 @@ def main(args: argparse.Namespace):
             "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
             "lr": args.lr_backbone,
         })
+    #FIXME: if init model from DETR, initialized parts should be set a smaller lr
     
     # loss
     loss_fn = CollectiveLoss(use_focal, args.focal_alpha, args.cls_coef, args.bbox_coef, args.giou_coef, args.obj_coef)

@@ -20,3 +20,4 @@ PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 python main.py \
     --dataset_file "test" \
     --num_workers 2 \
     --update_track_pos
+    --init_state ./detr-r50-e632da11.pth

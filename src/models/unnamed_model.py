@@ -6,9 +6,9 @@ from ..utils.misc import nested_tensor_from_tensor_list, NestedTensor
 from ..utils.api import BatchedOutputs
 
 from torch import nn, Tensor
-from typing import Union
+from typing import Union, Any
 
-import torch
+import torch, warnings
 
 
 class UnnamedModel(nn.Module):
@@ -225,8 +225,132 @@ class UnnamedModel(nn.Module):
         self.feat_queue: NestedTensor = None
 
 
+def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union[str, dict[str, Any]] = None, 
+                                      num_enc: int = 6, num_dec: int = 6, load_backbone_state: bool = False, skip_mismatch: bool = False, verbose: bool = False):
+    """
+    initialize model states partially from pretrained DETR model, `partially` indicates loading:
+        - self attention, multihead attention weights and bias from DETR transformer, box prediction head
+        - layernorm, FFN in transformer encoder and decoder blocks.
+        - feature to embedding projection weights, bias
+        - query position embedding weights
+        - DETR backbone state dict (optional)
+
+    Args:
+    ---
+        - model: target model which will be initialized, refers to the model in this project
+        - detr_state_dict: DETR model weights (state dict), if a string (path) is passed, weights will 
+            be loaded from given path or download from url
+        - num_enc: number of encoder layers in target model, if this number is larger than 6 (number of 
+            encoder layers in DETR), will only load weights to first 6 encoder layers
+        - num_dec: number of decoder layers in target model, if this number is larger than 6 (number of 
+            decoder layers in DETR), will only load weights to first 6 decoder layers
+        - load_backbone_state: load fine-tuned (on COCO) backbone of DETR, `False` for not loading
+        - skip_mismatch: skip weights loading if shapes of both weights are not the same, if 
+            `skip_mismatch=False`, will cast an error
+        - verbose: print info every time a particular layer is successfully loaded
+
+    Returns:
+    ---
+        - model with initialized from DETR. Note that this is a in-place operation.
+    """
+
+    # FIXME: parameterize url when there is a change of backbone (e.g. resnet101)
+    if detr_state_dict is None:
+        detr_state_dict: str = "https://dl.fbaipublicfiles.com/detr/detr-r50-e632da11.pth"
+
+    if isinstance(detr_state_dict, str):
+        if detr_state_dict.startswith("https:"):
+            detr_state_dict = torch.hub.load_state_dict_from_url(
+                url=detr_state_dict, map_location="cpu", check_hash=True
+            )
+        else:
+            detr_state_dict: dict[str, Any] = torch.load(detr_state_dict, weights_only=True, map_location="cpu")
+
+    if "model" in detr_state_dict: # checkpoint format
+        detr_state_dict = detr_state_dict["model"]
+
+    model_state_dict = model.state_dict()
+
+    def _validate_and_cover(target_key: str, src_key: str):
+        target_state, detr_state = model_state_dict[target_key], detr_state_dict[src_key]
+
+        if not target_state.shape == detr_state.shape:
+            msg = "shape mismatch: {} vs. {} at layer `{}` - `{}`".format(
+                target_state.shape, detr_state.shape, target_key, src_key
+            )
+            if not skip_mismatch:
+                raise ValueError(msg)
+            warnings.warn(msg)
+
+        model_state_dict[target_key] = detr_state
+        
+        if verbose:
+            print("loaded detr state: `{}` to model state: `{}`".format(src_key, target_key))
+
+    weight_types = ['weight', 'bias']
+    attn_in_proj_key = 'transformer.{}.layers.{}.{}.in_proj_{}'
+    attn_out_proj_key = 'transformer.{}.layers.{}.{}.out_proj.{}'
+    linear_norm_key = 'transformer.{}.layers.{}.{}.{}'
+
+    enc_name_map: dict[str, tuple[str, list[str]]] = dict(
+            spatial_attn=("self_attn", [attn_in_proj_key, attn_out_proj_key]),
+            spatial_norm=("norm1", [linear_norm_key]),
+            linear1=("linear1", [linear_norm_key]),
+            linear2=("linear2", [linear_norm_key]),
+            ffn_norm=("norm2", [linear_norm_key])
+        )
+    
+    dec_name_map: dict[str, tuple[str, list[str]]] = dict(
+            query_self_attn=("self_attn", [attn_in_proj_key, attn_out_proj_key]),
+            spatial_attn=("multihead_attn", [attn_in_proj_key, attn_out_proj_key]),
+            sa_norm=("norm1", [linear_norm_key]),
+            spatial_norm=("norm2", [linear_norm_key]),
+            linear1=("linear1", [linear_norm_key]),
+            linear2=("linear2", [linear_norm_key]),
+            ffn_norm=("norm3", [linear_norm_key])
+        )
+    
+    misc_name_map: dict[str, str] = {
+        "input_proj.{}": "input_proj.{}", # conv2d: feature to embedding projection
+        "head.box_branch.linear_layers.0.{}": "bbox_embed.layers.0.{}", # box ffn
+        "head.box_branch.linear_layers.1.{}": "bbox_embed.layers.1.{}",
+        "head.box_branch.linear_layers.2.{}": "bbox_embed.layers.2.{}",
+    }
+    
+    # load transformer encoder & decoder
+    for name_map, part, num in zip([enc_name_map, dec_name_map], ["encoder", "decoder"], [num_enc, num_dec]):
+        for i in range(min(num, 6)): # DETR has 6 encoders and 6 decoders, here makes a clipping
+            for layer_name, (detr_layer_name, keys) in name_map.items():
+                for key in keys: # attn has in_proj and out_proj
+                    for _type in weight_types:
+                        target_key = key.format(part, i, layer_name, _type)
+                        src_key = key.format(part, i, detr_layer_name, _type)
+
+                        _validate_and_cover(target_key, src_key)
+
+    # load query position embedding
+    _validate_and_cover(f"query_spatial_pos_embed.weight", f"query_embed.weight")
+
+    # load misc
+    for _type in weight_types:
+        for target_key, src_key in misc_name_map.items():
+            _validate_and_cover(target_key.format(_type), src_key.format(_type))
+
+    if load_backbone_state:
+        for key in model_state_dict.keys():
+            if key.startswith("backbone"):
+                src_key = key.replace("backbone", "backbone.0")
+                _validate_and_cover(key, src_key)
+
+    model.load_state_dict(model_state_dict)
+
+    return model
+
+
+
 __all__ = [
-    "UnnamedModel"
+    "UnnamedModel",
+    "load_states_from_pretrained_detr"
 ]
 
 
