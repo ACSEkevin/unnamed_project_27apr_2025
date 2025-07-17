@@ -245,7 +245,7 @@ class ClassificationLoss(Loss):
             assert target.ndim == 2, target.ndim
 
         probs = pred.sigmoid()
-        loss = self.bce.forward(probs, target)
+        loss = self.bce(probs, target)
 
         if self.focal:
             p_t = probs * target + (1 - probs) * (1 - target)
@@ -474,7 +474,7 @@ class CollectiveLoss(Loss):
         #loss matrix: [3, B]
         loss_matrices, batched_num_objs = self.forward(pred, targets, matched_detect_results, matched_track_results)
 
-        if pred.has_aux_outputs:
+        if pred.has_aux_outputs and self.training:
             for aux_pred in pred.aux_outputs:
                 aux_loss, aux_num_objs = self.forward(aux_pred, targets, matched_detect_results, matched_track_results)
 
