@@ -11,7 +11,7 @@ from collections import defaultdict, deque
 import datetime
 import pickle
 from packaging import version
-from typing import Optional, List
+from typing import Optional, List, TypeVar
 
 import torch
 import torch.distributed as dist
@@ -23,6 +23,7 @@ if version.parse(torchvision.__version__) < version.parse('0.7'):
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
 
+_T = TypeVar("_T")
 
 class SmoothedValue(object):
     """Track a series of values and provide access to smoothed values over a
@@ -86,7 +87,7 @@ class SmoothedValue(object):
             value=self.value)
 
 
-def all_gather(data):
+def all_gather(data: _T):
     """
     Run all_gather on arbitrary picklable data (not necessarily tensors)
     Args:
@@ -121,7 +122,7 @@ def all_gather(data):
         tensor = torch.cat((tensor, padding), dim=0)
     dist.all_gather(tensor_list, tensor)
 
-    data_list = []
+    data_list: list[_T] = []
     for size, tensor in zip(size_list, tensor_list):
         buffer = tensor.cpu().numpy().tobytes()[:size]
         data_list.append(pickle.loads(buffer))
