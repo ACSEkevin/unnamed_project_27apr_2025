@@ -19,9 +19,9 @@ class Head(nn.Module):
         ---
             - x: hidden state spitted by transformer, shape [N_inter, Nq, D]
         """
-        _cls = self.cls_branch.forward(x)
-        boxes = self.box_branch.forward(x).sigmoid()
-        obj = self.obj_branch.forward(x)
+        _cls = self.cls_branch(x)
+        boxes = self.box_branch(x).sigmoid()
+        obj = self.obj_branch(x)
 
         return _cls, boxes, obj
 

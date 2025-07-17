@@ -110,9 +110,9 @@ class UnnamedModel(nn.Module):
         return x
     
     def _update_track_query_pos_embed(self, x: Tensor) -> Tensor:
-        x1 = self.query_update_mlp.forward(x)
+        x1 = self.query_update_mlp(x)
         x = x + x1 # shorcut
-        x = self.query_update_norm.forward(x)
+        x = self.query_update_norm(x)
 
         return x
 
@@ -130,19 +130,19 @@ class UnnamedModel(nn.Module):
                 for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_obj[:-1])]
 
     def build_position_embeddings(self, features: NestedTensor):
-        spatial_pos = self.spatial_pos_embed.forward(features).unflatten(0, [-1, self.num_frames]) # [B, T, D, H, W]
+        spatial_pos = self.spatial_pos_embed(features).unflatten(0, [-1, self.num_frames]) # [B, T, D, H, W]
         query_spatial_pos = self.query_spatial_pos_embed.weight.unsqueeze(0).repeat(spatial_pos.size(0), 1, 1) # [B, Nq, D] 
 
         features.unflatten_by_seq_(self.num_frames) # [B, T, ...]
-        temporal_pos = self.temporal_pos_embed.forward(features) # [B, T, D, H, W]
-        query_temporal_pos = self.query_temporal_pos_embed.forward(features) # [B, T, D]
+        temporal_pos = self.temporal_pos_embed(features) # [B, T, D, H, W]
+        query_temporal_pos = self.query_temporal_pos_embed(features) # [B, T, D]
 
         return spatial_pos, temporal_pos, query_spatial_pos, query_temporal_pos
 
     def extract_and_project(self, x: NestedTensor) -> NestedTensor:
-        outs = self.backbone.forward(x)
+        outs = self.backbone(x)
         feats = [feat for _, feat in outs.items()][-1] # [BT, C, H, W], [BT, H, W]
-        feats.tensors = self.input_proj.forward(feats.tensors) # [BT, D, H, W]
+        feats.tensors = self.input_proj(feats.tensors) # [BT, D, H, W]
 
         return feats
 
@@ -199,13 +199,13 @@ class UnnamedModel(nn.Module):
                 tgt_mask[..., self.num_queries:] = track_queries_with_pos.mask > -2. # -2: padded queries
         
         # [n_inter, B, N, D]
-        hidden_state, _ = self.transformer.forward(
+        hidden_state, _ = self.transformer(
             self.feat_queue.tensors, tgts, # src tgt
             spatial_pos, temporal_pos, query_spatial_pos, query_temporal_pos, # pos embeddings
             self.feat_queue.mask, tgt_mask # masks
         )
         # [B, N, N_cls + 1], [B, N, 4], [B, N, 1]
-        cls_out, box_out, obj_out = self.head.forward(hidden_state)
+        cls_out, box_out, obj_out = self.head(hidden_state)
         outs = {
             'pred_logits': cls_out[-1], 'pred_boxes': box_out[-1],
             'pred_objs': obj_out[-1], 'hs': hidden_state[-1]

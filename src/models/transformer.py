@@ -82,13 +82,13 @@ class SpatialTemporalTransformer(nn.Module):
         if src_mask is not None:
             src_mask = src_mask.flatten(0, 1).flatten(1, 2) # [BT, HW]
 
-        memory = self.encoder.forward(
+        memory = self.encoder(
             src,
             src_key_padding_mask=src_mask, 
             spatial_pos=spatial_pos_embed,
             temporal_pos=temporal_pos_embed
         ) # [T, HW, B, D]
-        hs = self.decoder.forward(queries, memory, 
+        hs = self.decoder(queries, memory, 
                                   memory_key_padding_mask=src_mask,
                                   tgt_key_padding_mask=tgt_mask,
                                   pos=spatial_pos_embed, 
@@ -117,7 +117,7 @@ class SpatialTemporalTransformerEncoder(nn.Module):
         output = src
 
         for layer in self.layers:
-            output = layer.forward(
+            output = layer(
                 output, 
                 src_mask=mask,
                 src_key_padding_mask=src_key_padding_mask, 

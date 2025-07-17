@@ -60,7 +60,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
             src_pos = self.with_pos_embed(src, temporal_pos)
             q = k = src_pos.flatten(1, 2)
             v = src.flatten(1, 2)
-            src2 = self.temporal_attn.forward(q, k, value=v)[0]
+            src2 = self.temporal_attn(q, k, value=v)[0]
             src = v + self.temporal_dropout(src2)
             src = self.temporal_norm(src)
 
@@ -146,7 +146,7 @@ class SpatialDecoderLayer(nn.Module):
          # [T, N, B, D] -> [T, NxB, D]
         tgt = tgt.contiguous().view(N, T, B, D).transpose(0, 1).flatten(1, 2)
         tgt_with_pos = self.with_pos_embed(tgt, query_temporal_pos.flatten(1, 2)) # temporal pos encoding
-        tgt2 = self.temporal_attn.forward(query=tgt_with_pos, key=tgt_with_pos, value=tgt)[0]
+        tgt2 = self.temporal_attn(query=tgt_with_pos, key=tgt_with_pos, value=tgt)[0]
         tgt = tgt + self.temporal_dropout(tgt2)
         tgt = self.temporal_norm(tgt)[-1] # [T, NxB, D] -> [NxB, D]
 
