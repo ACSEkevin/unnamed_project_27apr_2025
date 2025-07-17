@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, ConstantLR
 from torch.utils.tensorboard import SummaryWriter
+from typing import Union
 from tqdm import tqdm
 
 import torch, os, shutil
@@ -14,6 +15,7 @@ from src.utils.box_ops import box_iou, box_cxcywh_to_xyxy
 from src.models import UnnamedModel
 from src.losses import Matcher, CollectiveLoss
 from src.metrics import MOTMetricWrapper
+from src.utils import misc
 
 
 # TODO: auto mixed precision training at cuda divice
@@ -22,7 +24,7 @@ class Trainer:
     Define the procedure of training process of the model.
     """
     def __init__(self,
-                 model: UnnamedModel,
+                 model: Union[UnnamedModel, nn.parallel.DistributedDataParallel],
                  loss: CollectiveLoss,
                  optim: Optimizer,
                  lr_scheduler: LRScheduler = None,
@@ -35,8 +37,12 @@ class Trainer:
                  cls_conf: float = 0.5,
                  dur_occ_conf: float = 0.5,
                  matching_thres: float = None,
-                 log_dir: str = None
+                 log_dir: str = None,
+                 device: str = None,
                  ) -> None:
+        
+        self.distributed = isinstance(model, nn.parallel.DistributedDataParallel)
+        self.device: str = device if device else next(model.parameters()).device
         
         self.model = model
         self.loss_fn = loss
@@ -54,10 +60,11 @@ class Trainer:
             loss.box_giou_loss_weight
         )
 
-        self.num_frames = model.num_frames
         self.epoch_start = 0
         self.current_epoch = 0
-        self.device: str = "cpu"
+
+        self.model_name = model.name if not self.distributed else model.module.name
+        self.num_frames = model.num_frames if not self.distributed else model.module.num_frames
 
         self.evaluator = Evaluator(
             self.model, max_disappear_times, max_track_history, 
@@ -98,7 +105,6 @@ class Trainer:
             matched_hs_indices = matched_detect_results[batch_idx][0]
             indices = torch.arange(pred.num_detect_queries).to(pred.detection_boxes.device).long() # indices
 
-            # FIXME: logistic output
             scores = pred.detection_logits[batch_idx].sigmoid().max(-1).values # [N, N_cls] -> [N]
             indices_higher_score = torch.where(scores >= max_score)[0] # queries with scores over max_score
             invalid_indices = torch.cat([matched_hs_indices, indices_higher_score], dim=0) # [N_invalid]
@@ -252,36 +258,54 @@ class Trainer:
         self.epoch_start = 0
         self.current_epoch = 0
 
-        self.model.reset_prefill()
+        if self.distributed:
+            self.model.module.reset_prefill()
+        else:
+            self.model.reset_prefill()
 
         if self.log_dir:
             self._writer.close()
     
     def to(self, device: str) -> "Trainer":
-        self.model.to(device)
+        if not self.distributed:
+            self.model.to(device)
         self.loss_fn.to(device)
         self.evaluator.to(device)
         self.device = device
 
         return self
     
+    def sync_all_processes(self):
+        if self.distributed:
+            torch.distributed.barrier()
+    
     def save_checkpoint(self, path: str):
+        model_state = self.model.module.state_dict() if self.distributed else self.model.state_dict()
         state_dict = dict(
-            model=self.model.state_dict(),
+            model=model_state,
             optimizer=self.optim.state_dict(),
             lr_scheduler=self.lr_scheduler.state_dict(),
             epoch=self.current_epoch
         )
-        torch.save(state_dict, path)
+        if self.distributed:
+            misc.save_on_master(state_dict, path)
+        else:
+            torch.save(state_dict, path)
 
     def load_checkpoint(self, path: str, weights_only: bool = True):
         ckpt = torch.load(path, map_location="cpu", weights_only=weights_only)
-        self.model.load_state_dict(ckpt["model"])
+        if self.distributed:
+            self.model.module.load_state_dict(ckpt["model"])
+        else:
+            self.model.load_state_dict(ckpt["model"])
+
         self.optim.load_state_dict(ckpt["optimizer"])
         self.lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
 
         self.epoch_start = ckpt["epoch"]
         self.current_epoch = ckpt["epoch"]
+
+        self.sync_all_processes()
 
     def train(self, train_dataloader: DataLoader, val_dataloader: DataLoader = None, num_epochs: int = 1, 
               eval_freq: int = 0, save_freq: int = 0, save_dir: str = None, device: str = None):
@@ -306,7 +330,7 @@ class Trainer:
             self.device = device
 
         if not self.epoch_start == 0:
-            print("model will trained from epoch {}".format(self.epoch_start + 1))
+            print("model will be trained from epoch {}".format(self.epoch_start + 1))
 
         for epoch in range(self.epoch_start, num_epochs):
             print("\nepoch {}/{}".format(epoch + 1, num_epochs))
@@ -314,7 +338,9 @@ class Trainer:
             self.train_one_epoch(train_dataloader)
 
             if val_dataloader is not None and eval_freq > 0 and (epoch + 1) % eval_freq == 0:
-                eval_result = self.evaluator.evaluate(val_dataloader, report_result=True)
+                eval_result = self.evaluator.evaluate(val_dataloader)
+                if misc.is_main_process():
+                    print(eval_result)
 
                 if self.log_dir:
                     for name, value in zip(eval_result.columns, eval_result.values[0]):
@@ -329,7 +355,7 @@ class Trainer:
                     save_dir = os.path.join(os.getcwd(), "checkpoints")
                     if not os.path.exists(save_dir):
                         os.mkdir(save_dir)
-                    save_path = os.path.join(save_dir, f"{self.model.name}_epoch_{epoch + 1}.pth")
+                    save_path = os.path.join(save_dir, f"{self.model_name}_epoch_{epoch + 1}.pth")
 
                 self.save_checkpoint(save_path)
 
@@ -348,6 +374,7 @@ class Trainer:
 
             for loss_name, value in zip(["cls_loss", "obj_loss", "reg_loss"], loss_mat):
                 postfix_kwargs.update({loss_name: value.item()})
+                postfix_kwargs = misc.reduce_dict(postfix_kwargs) # reduce losses of all process when DDP
 
                 if self.log_dir:
                     self._writer.add_scalar(
@@ -363,7 +390,7 @@ class Trainer:
     def train_one_step(self, inputs: list[GroundTruth]):
         self.on_step_begin()
 
-        assert inputs[0].num_frames == self.model.num_frames
+        assert inputs[0].num_frames == self.num_frames
         inputs = [i.to(self.device) for i in inputs]
         
         images = torch.stack([gt.images for gt in inputs], dim=0) # [B, T, 3, H, W]
@@ -377,7 +404,7 @@ class Trainer:
                 # single-image inference [B, 1, 3, H, W]
                 batched_inputs = images[:, self.num_frames + iter_index - 1: self.num_frames + iter_index]
 
-            preds = self.model.forward(batched_inputs, track_queries_with_pos)
+            preds = self.model(batched_inputs, track_queries_with_pos)
             preds.set_iter_index(iter_index)
 
             if iter_index > 0: # might contains track queries
@@ -391,7 +418,7 @@ class Trainer:
                 self.sample_fp_prob, self.sample_max_score, self.drop_rate
             ) # sample fp & padding
 
-        loss_mat = self.loss_fn.unsummed_result() # returned for loss diaplaying
+        loss_mat = self.loss_fn.unsummed_result() # returned for loss diaplaying [3]: [cls, cur_occ, reg]
         loss = loss_mat.sum() # cls + obj + reg loss
         loss.backward()
 
@@ -401,7 +428,7 @@ class Trainer:
         self.optim.step()
         self.on_step_end()
 
-        return loss_mat
+        return loss_mat.detach()
     
     def on_train_begin(self):...
     def on_train_end(self):...
@@ -413,24 +440,27 @@ class Trainer:
     def on_epoch_end(self):
         self.current_epoch += 1
         self.lr_scheduler.step()
-        self.model.reset_prefill()
 
     def on_step_begin(self):
-        self.model.reset_prefill()
         self.optim.zero_grad()
 
     def on_step_end(self):
         self.loss_fn.reset()
 
+        if self.distributed:
+            self.model.module.reset_prefill()
+        else:
+            self.model.reset_prefill()
+
 
 class Evaluator:
     """
     Evaluate the model.\\
-    NOTE that evalutation batch must set to 1, i.e. evaluate on
+    NOTE that evalutation batch (of each process) must set to 1, i.e. evaluate on
     a single video / video clip.
     """
     def __init__(self,
-                 model: UnnamedModel,
+                 model: Union[UnnamedModel, nn.parallel.DistributedDataParallel],
                  max_disappear_times: int,
                  max_track_history: int = 10,
                  cls_conf: float = 0.5, 
@@ -439,17 +469,20 @@ class Evaluator:
                  device: str = None
                  ) -> None:
         
+        self.distributed = isinstance(model, nn.parallel.DistributedDataParallel)
+        self.device = device if device else next(model.parameters()).device
+        
         self.model = model
         self.max_disappear_times = max_disappear_times
         self.max_track_history = max_track_history
         self.cls_conf = cls_conf
         self.dur_occ_conf = dur_occ_conf
         self.matching_thres = matching_thres
-        self.device = device if device else "cpu"
-
+        
         self.num_frames = model.num_frames
         self.met = MOTMetricWrapper(matching_thres=matching_thres)
-        self.track_manager = TrackManager(max_disappear_times, max_track_history)
+        self.track_manager = TrackManager(max_disappear_times, max_track_history).to(self.device)
+        
 
     def _calculate_distance_mat(self, iter_index: int, target: GroundTruth, dist_thres: float = None):
         """
@@ -492,7 +525,6 @@ class Evaluator:
         #1. update status of existing tracks
         if out.has_track_queries: # has tracks from last frame
             assert out.track_ids is not None # [N_t]
-            # FIXME: logistic output
             track_cls_scores = out.track_logits.squeeze().sigmoid().max(-1).values # [N_t]
             cur_objness = track_cls_scores > cls_conf # [N_t]
             d_occ = out.track_objs[0].sigmoid() > dur_occ_conf # [N_t, 1]
@@ -513,7 +545,6 @@ class Evaluator:
         num_deleted_tracks = self.track_manager.delete_disappeared_tracks()
 
         # 3. create new tracks from new detections
-        # FIXME: logistic output
         cls_scores, cls_indices = out.detection_logits.squeeze().sigmoid().max(-1) # [1, N_d, N_cls + 1] -> [N_d, N_cls] -> [N_d]
         keep = cls_scores > cls_conf
 
@@ -538,11 +569,16 @@ class Evaluator:
         return NestedTensor(track_with_pos_embed.unsqueeze(0), None), track_ids, num_deleted_tracks, filtered_cls_indices.numel()
 
     def to(self, device: str) -> "Evaluator":
-        self.model.to(device)
+        if not self.distributed:
+            self.model.to(device)
         self.track_manager = self.track_manager.to(device)
         self.device = device
 
         return self
+    
+    def sync_all_processes(self):
+        if self.distributed:
+            torch.distributed.barrier()
 
     @torch.no_grad()
     def evaluate(self, dataloader: DataLoader, report_result: bool = False):
@@ -587,7 +623,7 @@ class Evaluator:
                 # single-image inference [1, 1, 3, H, W]
                 batched_inputs = target.images[:, self.num_frames + iter_index - 1: self.num_frames + iter_index]
 
-            preds = self.model.forward(batched_inputs, track_queries_with_pos)
+            preds = self.model(batched_inputs, track_queries_with_pos)
             preds.set_iter_index(iter_index)
             if iter_index > 0:
                 preds.set_track_ids(track_ids)
@@ -608,10 +644,15 @@ class Evaluator:
     def on_eval_end(self):
         self.met.reset()
         self.track_manager.reset()
+        self.sync_all_processes()
 
     def on_step_begin(self):...
     def on_step_end(self):
         self.met.accumulate()
         self.track_manager.reset()
-        self.model.reset_prefill()
+        
+        if self.distributed:
+            self.model.module.reset_prefill()
+        else:
+            self.model.reset_prefill()
     

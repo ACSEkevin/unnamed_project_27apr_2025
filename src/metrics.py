@@ -4,6 +4,8 @@ import pandas as pd
 from torch import Tensor
 from pandas import DataFrame
 
+from .utils.misc import all_gather
+
 
 class MOTMetricWrapper:
     def __init__(self, matching_thres: float = .5, metrics: list[str] = None) -> None:
@@ -34,10 +36,11 @@ class MOTMetricWrapper:
     def accumulate(self) -> DataFrame:
         """
         Accumulate partial result or result of events predicted from a single video.
-        This is used for caculating final scores which reduces partial results.
+        This is used for calculating final scores which reduces partial results.
         """
         summary = self.partial_result(render=False)
-        self._results.append(summary)
+        summaries = all_gather(summary) # gather results of all processes
+        self._results.extend(summaries)
         self._acc.reset()
 
         return summary
@@ -61,6 +64,7 @@ class MOTMetricWrapper:
 
         return summary
     
+    # FIXME: incorrect calculation, should generalize to all metrics
     def result(self, std_out: bool = True):
         """
         Reduce partial results.

@@ -1,6 +1,6 @@
 import argparse
 
-import torch, os
+import torch, os, random, numpy
 from torch.utils.data import DataLoader, DistributedSampler
 
 from src.models import UnnamedModel, load_states_from_pretrained_detr
@@ -16,6 +16,7 @@ def get_args_parser():
     # global
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
+    #FIXME: evaluation flag: main.py script should be generalized for evaluating as well
     
     # training configs
     ## loss coef: Matcher and Collective Loss share thes params
@@ -91,6 +92,7 @@ def get_args_parser():
     parser.add_argument("--anno_root", type=str, help="annotation root")
     parser.add_argument('--remove_difficult', action='store_true')
     parser.add_argument('--sample_interval', default=1, type=int, help="video key frame sampling interval")
+    parser.add_argument('--seed', default=42, type=int)
 
     parser.add_argument('--num_workers', default=2, type=int) # dataloader workers
     parser.add_argument('--max_size', default=1333, type=int)
@@ -112,13 +114,20 @@ def main(args: argparse.Namespace):
     # global
     num_cls_map = {"mot17": 1, "tao": 833, "test": 20}
     assert args.dataset_file in num_cls_map, "Current supported data: `TAO`, `MOT17`, got {}".format(args.dataset_file)
-    num_classes = num_cls_map[args.dataset_file]
+
     device = torch.device(args.device)
+
+    num_classes = num_cls_map[args.dataset_file]
     freeze_backbone = args.lr_backbone <= 0.
     use_focal = args.focal_alpha > 0.
 
     utils.init_distributed_mode(args)
 
+    # fix the seed for reproducibility
+    seed = args.seed + utils.get_rank()
+    torch.manual_seed(seed)
+    numpy.random.seed(seed)
+    random.seed(seed)
 
     # instantiating model
     # TODO: distributed model
@@ -130,20 +139,25 @@ def main(args: argparse.Namespace):
                          dropout=args.dropout, aux_output=args.no_aux_output)
     
     if args.init_state: # True or class <str>
-        path = None if isinstance(path, bool) else args.init_state
+        path = None if isinstance(args.init_state, bool) else args.init_state
         model = load_states_from_pretrained_detr(model, path, num_enc=args.enc_layers, num_dec=args.dec_layers, load_backbone_state=False)
     model.to(device)
+
+    model_without_ddp = model
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model_without_ddp = model.module
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     ram = n_params * 4 / 1024 ** 2
     print("num of trainable params: {:.2f}M({:.1f}MB)".format(n_params / 1e6, ram))
 
     param_dicts = [
-        {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
+        {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
     ]
     if not freeze_backbone:
         param_dicts.append({
-            "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
+            "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
             "lr": args.lr_backbone,
         })
     #FIXME: if init model from DETR, initialized parts should be set a smaller lr
@@ -156,6 +170,7 @@ def main(args: argparse.Namespace):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, args.lr_drop, gamma=.1)
 
     # dataset, sampler & dataloader FIXME: should be instantiated from src.dataset.__init__
+    # FIXME: sample_interval and num_iters should be parsed before configuring dataset
     # dataset_train = TAOAmodalDataset(args.root, args.anno_root, args.num_frames,
     #                                  args.sample_interval, mode="train", transform=build_tao_transform())
     # dataset_val = TAOAmodalDataset(args.root, args.anno_root, args.num_frames, 
@@ -185,7 +200,7 @@ def main(args: argparse.Namespace):
                       # eval params
                       max_disappear_times=4, max_track_history=10, 
                       cls_conf=0.8, dur_occ_conf=0.5, matching_thres=0.5,
-                      log_dir=args.log_dir).to(device)
+                      log_dir=args.log_dir, device=device)
     
     if args.ckpt_path:
         trainer.load_checkpoint(args.ckpt_path)
@@ -205,7 +220,7 @@ def main(args: argparse.Namespace):
         save_dir = args.save_dir
 
     trainer.save_checkpoint(
-        os.path.join(save_dir, f"{model.name}_epoch_{trainer.current_epoch}.pth")
+        os.path.join(save_dir, f"{model_without_ddp.name}_epoch_{trainer.current_epoch}.pth")
     )
 
 if __name__ == '__main__':
