@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from src.models import UnnamedModel, load_states_from_pretrained_detr
 from src.losses import CollectiveLoss
-from src.datasets import TAOAmodalDataset, PseudoDataSet, build_tao_transform, collate_fn_tao
+from src.datasets import *
 from src.utils import misc as utils
 from engine import Trainer
 
@@ -87,18 +87,21 @@ def get_args_parser():
     # parser.add_argument('--enc_n_points', default=4, type=int)
 
     # dataset configs
-    parser.add_argument('--dataset_file', type=str, default='tao', choices=["tao", "mot17", "test"])
+    parser.add_argument('--dataset_file', type=str, default='mot17', choices=["tao", "mot17", "test"])
     parser.add_argument('--root', type=str, help="frame root")
     parser.add_argument("--anno_root", type=str, help="annotation root")
+    parser.add_argument('--val_ratio', default=0.25, type=float, help="validation set ratio")
     parser.add_argument('--remove_difficult', action='store_true')
-    parser.add_argument('--sample_interval', default=1, type=int, help="video key frame sampling interval")
+    parser.add_argument('--max_sample_interval', default=12, type=int, help="maximum video key frame sampling interval")
+    parser.add_argument('--min_sample_interval', default=8, type=int, help="minimum video key frame sampling interval")
+    parser.add_argument('--sample_mode', type=str, default="random", choices=["fixed", "random"], help="sampling interval strategy")
     parser.add_argument('--seed', default=42, type=int)
 
     parser.add_argument('--num_workers', default=2, type=int) # dataloader workers
     parser.add_argument('--max_size', default=1333, type=int)
     parser.add_argument('--val_width', default=800, type=int)
 
-    parser.add_argument('--num_iters', type=int, nargs='*')
+    parser.add_argument('--num_iters', type=int, default=1, nargs='*')
     parser.add_argument('--resample_epochs', type=int, nargs='*', 
                         help="specify which training epoch the number of iterations will be changed.")
     
@@ -170,14 +173,17 @@ def main(args: argparse.Namespace):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optim, args.lr_drop, gamma=.1)
 
     # dataset, sampler & dataloader FIXME: should be instantiated from src.dataset.__init__
-    # FIXME: sample_interval and num_iters should be parsed before configuring dataset
     # dataset_train = TAOAmodalDataset(args.root, args.anno_root, args.num_frames,
     #                                  args.sample_interval, mode="train", transform=build_tao_transform())
     # dataset_val = TAOAmodalDataset(args.root, args.anno_root, args.num_frames, 
     #                                mode="val", transform=build_tao_transform())
-
-    dataset_train = PseudoDataSet(args.num_iters[0] + args.num_frames - 1, num_classes, args.num_frames)
-    dataset_val = PseudoDataSet(args.num_iters[0] + args.num_frames - 1, num_classes, args.num_frames)
+    if args.dataset_file == "mot17":
+        dataset_train, dataset_val = [build_mot_dataset(mode, args) for mode in ["train", "val"]]
+    elif args.dataset_file == 'tao':
+        raise NotImplementedError()
+    else:
+        dataset_train = PseudoDataSet(args.num_iters[0] + args.num_frames - 1, num_classes, args.num_frames)
+        dataset_val = PseudoDataSet(args.num_iters[0] + args.num_frames - 1, num_classes, args.num_frames)
 
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
@@ -197,7 +203,7 @@ def main(args: argparse.Namespace):
     # init trainer
     trainer = Trainer(model, loss_fn, optim, lr_scheduler,
                       args.clip_max_norm, args.fp_ratio, args.fp_max_score, args.random_drop,
-                      # eval params
+                      # eval params FIXME: to argument parser
                       max_disappear_times=4, max_track_history=10, 
                       cls_conf=0.8, dur_occ_conf=0.5, matching_thres=0.5,
                       log_dir=args.log_dir, device=device)
