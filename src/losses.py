@@ -62,7 +62,7 @@ class HungarianMatcher(nn.Module):
             assert len(invalid_target_indices) == len(targets)
 
         # We flatten to compute the cost matrices in a batch
-        out_prob = outputs.detection_logits.flatten(0, 1).softmax(-1)  # [batch_size * num_queries, num_classes]
+        out_prob = outputs.detection_logits.flatten(0, 1).sigmoid()  # [batch_size * num_queries, num_classes]
         out_bbox = outputs.detection_boxes.flatten(0, 1)  # [batch_size * num_queries, 4]
 
         # Also concat the target labels and boxes, annos [BM, 7] 7: [cls, ids, cx, cy, w, h, areas]
