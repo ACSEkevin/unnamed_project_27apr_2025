@@ -393,16 +393,16 @@ class Trainer:
         assert inputs[0].num_frames == self.num_frames
         inputs = [i.to(self.device) for i in inputs]
         
-        images = torch.stack([gt.images for gt in inputs], dim=0) # [B, T, 3, H, W]
+        images = [gt.images for gt in inputs] # [T, 3, H_, W_] * B
         prev_track_matching_res: list[tuple[Tensor, Tensor, Tensor, Tensor]] = None
         track_queries_with_pos: NestedTensor = None
 
         for iter_index in range(inputs[0].num_iters):
             if iter_index == 0:
-                batched_inputs = images[:, :self.num_frames]  # pre-fill, [B, num_frames, 3, H, W]
+                batched_inputs = [img[ :self.num_frames] for img in images]  # pre-fill, [B, num_frames, 3, H, W]
             else:
                 # single-image inference [B, 1, 3, H, W]
-                batched_inputs = images[:, self.num_frames + iter_index - 1: self.num_frames + iter_index]
+                batched_inputs = [img[self.num_frames + iter_index - 1: self.num_frames + iter_index] for img in images]
 
             preds = self.model(batched_inputs, track_queries_with_pos)
             preds.set_iter_index(iter_index)
@@ -525,16 +525,16 @@ class Evaluator:
         #1. update status of existing tracks
         if out.has_track_queries: # has tracks from last frame
             assert out.track_ids is not None # [N_t]
-            track_cls_scores = out.track_logits.squeeze().sigmoid().max(-1).values # [N_t]
+            track_cls_scores = out.track_logits[0].sigmoid().max(-1).values # [N_t]
             cur_objness = track_cls_scores > cls_conf # [N_t]
             d_occ = out.track_objs[0].sigmoid() > dur_occ_conf # [N_t, 1]
 
             self.track_manager.update(
                 torch.cat([ # FIXME: might occur size shrinking [N1, N2] -> [N1, ]
-                    out.track_ids.float().unsqueeze(-1),
-                    track_cls_scores.unsqueeze(-1),
+                    out.track_ids.float().view(-1, 1),
+                    track_cls_scores.view(-1, 1),
                     out.track_boxes.squeeze(),
-                    cur_objness.float().unsqueeze(-1),
+                    cur_objness.float().view(-1, 1),
                     d_occ.float(),
                 ], dim=1),
                 out.track_hs.squeeze(),
@@ -545,12 +545,12 @@ class Evaluator:
         num_deleted_tracks = self.track_manager.delete_disappeared_tracks()
 
         # 3. create new tracks from new detections
-        cls_scores, cls_indices = out.detection_logits.squeeze().sigmoid().max(-1) # [1, N_d, N_cls + 1] -> [N_d, N_cls] -> [N_d]
+        cls_scores, cls_indices = out.detection_logits[0].sigmoid().max(-1) # [1, N_d, N_cls + 1] -> [N_d, N_cls] -> [N_d]
         keep = cls_scores > cls_conf
 
         filtered_cls_indices, filtered_scores = cls_indices[keep], cls_scores[keep] # [N_d], [N_d]
-        filtered_boxes = out.detection_boxes.squeeze()[keep] # [N_d, 4]
-        filered_hs, filtered_pos = out.detection_hs.squeeze()[keep], out.detection_pos_embed.squeeze()[keep] # [N_d, 256]
+        filtered_boxes = out.detection_boxes[0][keep] # [N_d, 4]
+        filered_hs, filtered_pos = out.detection_hs[0][keep], out.detection_pos_embed[0][keep] # [N_d, 256]
 
         # TODO: add to log
         # max_bg = out.detection_logits.squeeze().softmax(-1)[..., -1].median()
@@ -558,8 +558,8 @@ class Evaluator:
 
         self.track_manager.create(
             torch.cat([
-                filtered_cls_indices.float().unsqueeze(-1),
-                filtered_scores.unsqueeze(-1),
+                filtered_cls_indices.float().view(-1, 1),
+                filtered_scores.view(-1, 1),
                 filtered_boxes,
             ], dim=1),
             filered_hs, filtered_pos
@@ -598,7 +598,7 @@ class Evaluator:
             pbar.set_description("eval")
             targets: list[GroundTruth] # typedef
             assert len(targets) == 1, "evaluator requires batch size must be 1, but got {}".format(len(targets))
-            assert targets[0].num_frames == self.model.num_frames
+            assert targets[0].num_frames == self.num_frames
 
             self.evaluate_one_step(targets[0])
 
