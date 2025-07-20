@@ -479,7 +479,7 @@ class Evaluator:
         self.dur_occ_conf = dur_occ_conf
         self.matching_thres = matching_thres
         
-        self.num_frames = model.num_frames
+        self.num_frames = model.num_frames if not self.distributed else model.module.num_frames
         self.met = MOTMetricWrapper(matching_thres=matching_thres)
         self.track_manager = TrackManager(max_disappear_times, max_track_history).to(self.device)
         
