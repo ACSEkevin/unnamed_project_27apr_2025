@@ -14,7 +14,7 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Training & evaluation configs', add_help=False)
 
     # global
-    parser.add_argument('--device', default='cuda',
+    parser.add_argument('--device', default='cpu',
                         help='device to use for training / testing')
     #FIXME: evaluation flag: main.py script should be generalized for evaluating as well
     
@@ -33,7 +33,7 @@ def get_args_parser():
     parser.add_argument('--batch_size', default=2, type=int) # per process
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1, type=int)
-    parser.add_argument('--lr_drop', default=0, type=int)
+    parser.add_argument('--lr_drop', default=10000, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
     
