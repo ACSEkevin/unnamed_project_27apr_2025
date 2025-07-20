@@ -18,7 +18,7 @@ class PseudoDataSet(Dataset):
                     labels=torch.randint(0, num_classes, [num_objs]),
                     boxes=torch.randn([num_objs, 4]).float().sigmoid(),
                     ids=torch.randperm(num_objs + 10)[:num_objs],
-                    areas=torch.randn([num_objs]).float().sigmoid(), 
+                    area=torch.randn([num_objs]).float().sigmoid(), 
                     num_iter=self.num_images - self.num_frames + 1,
                 ) for num_objs in torch.randint(1, 30, [self.num_images]).tolist()]
             )
