@@ -101,8 +101,7 @@ class MOT17DynamicDataset(Dataset):
                 # frame_annos[:, 5] /= img_h
 
                 frame_annos = torch.from_numpy(frame_annos).float()
-
-                anno_dict["labels"] = torch.ones(frame_annos.size(0)).long()
+                anno_dict["labels"] = torch.zeros(frame_annos.size(0)).long() # class id: 0
                 anno_dict["ids"] = frame_annos[:, 1].long()
                 anno_dict["boxes"] = frame_annos[:, 2:6]
                 anno_dict["area"] = frame_annos[:, 4] * frame_annos[:, 5]
