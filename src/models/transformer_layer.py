@@ -260,5 +260,5 @@ def _get_activation_fn(activation):
 __all__ = [
     "SpatialTemporalEncoderLayer",
     "SpatialDecoderLayer",
-    "TrajectoryAttention"
+    # "TrajectoryAttention"
 ]
