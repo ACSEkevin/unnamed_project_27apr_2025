@@ -17,7 +17,7 @@ class GroundTruth:
                 - `labels`: category info, shape [N_obj]
                 - `boxes`: normalized box with a format of [cx, cy, w, h], shape [N_obj, 4]
                 - `ids`: object instance id, if cannot read id from annotations, gives -1, shape [N_obj]
-                - `areas`: bounding box area, if 0, shape[N_obj]
+                - `area`: bounding box area, if 0, shape[N_obj]
                 - `num_iter`: number of iterations in this round.
         """
 
@@ -104,7 +104,7 @@ class GroundTruth:
         ---
             - index: specifies objects from frame index. in not given, return all objects from the video clip.
         """
-        keys = ["labels", "ids", "boxes", "areas"]
+        keys = ["labels", "ids", "boxes", "area"]
         if index:
             return torch.cat([self.annos[index][key].float() for key in keys], dim=1)
         
