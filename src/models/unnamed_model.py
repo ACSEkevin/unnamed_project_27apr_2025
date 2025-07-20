@@ -84,7 +84,7 @@ class UnnamedModel(nn.Module):
             decode_size = self.num_frames
             err_msg = "before"
 
-        assert x.size(time_dim) == decode_size,\
+        assert sample.size(time_dim) == decode_size,\
             "{} frame(s) must be passed {} `pre-fill` stage, but got {}, size: {}".format(
             decode_size, err_msg, sample.size(time_dim), sample.size()
         )
