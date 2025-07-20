@@ -98,6 +98,10 @@ class HungarianMatcher(nn.Module):
                     2000, 3000, [cost.size(0), invalid_target_indices[index].numel()]
                 ).float().cpu()
 
+            if torch.isnan(cost).any():
+                print("warning: cost contains nan at index: {}".format(index))
+                cost = torch.nan_to_num_(cost, 1e4)
+
             hs_indices, gt_indices = [torch.as_tensor(idx).long() for idx in linear_sum_assignment(cost)]
             mask = cost[hs_indices, gt_indices] < 1000.
             hs_indices, gt_indices = [idx[mask].to(device) for idx in [hs_indices, gt_indices]] # drop invalid pairs.
