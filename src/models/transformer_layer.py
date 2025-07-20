@@ -3,7 +3,7 @@ import torch
 from torch import nn, Tensor, einsum
 from torch.nn import functional as F
 from typing import Optional
-from einops import rearrange
+# from einops import rearrange
 
 # FIXME: temporal attention could be chosen to sigmoid activated
 class SpatialTemporalEncoderLayer(nn.Module):
@@ -157,93 +157,93 @@ class SpatialDecoderLayer(nn.Module):
         return tgt.contiguous().view(N, B, D)
     
 
-class TrajectoryAttention(nn.Module):
-    """
-    Trajectory attention, copied and modified from 
-    [MotionFormer](https://github.com/facebookresearch/Motionformer/blob/main/slowfast/models/vit_helper.py).
-    """
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., use_original_code=True):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+# class TrajectoryAttention(nn.Module):
+    # """
+    # Trajectory attention, copied and modified from 
+    # [MotionFormer](https://github.com/facebookresearch/Motionformer/blob/main/slowfast/models/vit_helper.py).
+    # """
+    # def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., use_original_code=True):
+    #     super().__init__()
+    #     self.num_heads = num_heads
+    #     self.head_dim = dim // num_heads
+    #     self.scale = self.head_dim ** -0.5
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.proj_q = nn.Linear(dim, dim, bias=qkv_bias)
-        self.proj_kv = nn.Linear(dim, dim * 2, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
+    #     self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+    #     self.proj_q = nn.Linear(dim, dim, bias=qkv_bias)
+    #     self.proj_kv = nn.Linear(dim, dim * 2, bias=qkv_bias)
+    #     self.attn_drop = nn.Dropout(attn_drop)
+    #     self.proj = nn.Linear(dim, dim)
+    #     self.proj_drop = nn.Dropout(proj_drop)
         
-        # A typo in the original code meant that the value tensors for the temporal
-        # attention step were identical to the input instead of being multiplied by a
-        # learned projection matrix (v = x rather than v = Wx). The original code is
-        # kept to facilitate replication, but is not recommended.
-        self.use_original_code = use_original_code
+    #     # A typo in the original code meant that the value tensors for the temporal
+    #     # attention step were identical to the input instead of being multiplied by a
+    #     # learned projection matrix (v = x rather than v = Wx). The original code is
+    #     # kept to facilitate replication, but is not recommended.
+    #     self.use_original_code = use_original_code
 
-    @staticmethod
-    def _qkv_attn_op(q: Tensor, k: Tensor, v: Tensor):
-        sim = einsum('b i d, b j d -> b i j', q, k)
-        attn = sim.softmax(dim=-1)
-        out = einsum('b i j, b j d -> b i d', attn, v)
-        return out
+    # @staticmethod
+    # def _qkv_attn_op(q: Tensor, k: Tensor, v: Tensor):
+    #     sim = einsum('b i d, b j d -> b i j', q, k)
+    #     attn = sim.softmax(dim=-1)
+    #     out = einsum('b i j, b j d -> b i d', attn, v)
+    #     return out
 
-    def forward(self, x, seq_len=196, num_frames=8, num_landmarks=128):
-        B, N, C = x.shape
-        P = seq_len
-        F = num_frames
-        h = self.num_heads
+    # def forward(self, x, seq_len=196, num_frames=8, num_landmarks=128):
+    #     B, N, C = x.shape
+    #     P = seq_len
+    #     F = num_frames
+    #     h = self.num_heads
 
-        # project x to q, k, v vaalues
-        q, k, v = self.qkv(x).chunk(3, dim=-1)
+    #     # project x to q, k, v vaalues
+    #     q, k, v = self.qkv(x).chunk(3, dim=-1)
 
-        # Reshape: 'b n (h d) -> (b h) n d'
-        q, k, v = map(
-            lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+    #     # Reshape: 'b n (h d) -> (b h) n d'
+    #     q, k, v = map(
+    #         lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
 
-        # remove CLS token from q, k, v
-        (cls_q, q_), (cls_k, k_), (cls_v, v_) = map(
-            lambda t: (t[:, 0:1], t[:, 1:]), (q, k, v))
+    #     # remove CLS token from q, k, v
+    #     (cls_q, q_), (cls_k, k_), (cls_v, v_) = map(
+    #         lambda t: (t[:, 0:1], t[:, 1:]), (q, k, v))
 
-        # let CLS token attend to key / values of all patches across time and space
-        cls_out = self._qkv_attn_op(cls_q * self.scale, k, v)
-        cls_out = rearrange(cls_out, f'(b h) f d -> b f (h d)', f=1, h=h)
+    #     # let CLS token attend to key / values of all patches across time and space
+    #     cls_out = self._qkv_attn_op(cls_q * self.scale, k, v)
+    #     cls_out = rearrange(cls_out, f'(b h) f d -> b f (h d)', f=1, h=h)
 
         
-        # Using full attention
-        q_dot_k = q_ @ k_.transpose(-2, -1)
-        q_dot_k = rearrange(q_dot_k, 'b q (f n) -> b q f n', f=F)
-        space_attn = (self.scale * q_dot_k).softmax(dim=-1)
-        attn = self.attn_drop(space_attn)
-        v_ = rearrange(v_, 'b (f n) d -> b f n d', f=F, n=P)
-        x = torch.einsum('b q f n, b f n d -> b q f d', attn, v_)
+    #     # Using full attention
+    #     q_dot_k = q_ @ k_.transpose(-2, -1)
+    #     q_dot_k = rearrange(q_dot_k, 'b q (f n) -> b q f n', f=F)
+    #     space_attn = (self.scale * q_dot_k).softmax(dim=-1)
+    #     attn = self.attn_drop(space_attn)
+    #     v_ = rearrange(v_, 'b (f n) d -> b f n d', f=F, n=P)
+    #     x = torch.einsum('b q f n, b f n d -> b q f d', attn, v_)
 
-        # Temporal attention: query is the similarity-aggregated patch
-        x = rearrange(x, '(b h) s f d -> b s f (h d)', b=B)
-        x_diag = rearrange(x, 'b (g n) f d -> b g n f d', g=F)
-        x_diag = torch.diagonal(x_diag, dim1=-4, dim2=-2)
-        x_diag = rearrange(x_diag, f'b n d f -> b (f n) d', f=F)
-        q2 = self.proj_q(x_diag)
-        k2, v2 = self.proj_kv(x).chunk(2, dim=-1)
-        q2 = rearrange(q2, f'b s (h d) -> b h s d', h=h)
-        q2 *= self.scale
-        k2, v2 = map(
-            lambda t: rearrange(t, f'b s f (h d) -> b h s f d', f=F,  h=h), (k2, v2))
-        attn = torch.einsum('b h s d, b h s f d -> b h s f', q2, k2)
-        attn = attn.softmax(dim=-1)
-        if self.use_original_code:
-            x = rearrange(x, f'b s f (h d) -> b h s f d', f=F,  h=h)
-            x = torch.einsum('b h s f, b h s f d -> b h s d', attn, x)
-        else:
-            x = torch.einsum('b h s f, b h s f d -> b h s d', attn, v2)
-        x = rearrange(x, f'b h s d -> b s (h d)')
+    #     # Temporal attention: query is the similarity-aggregated patch
+    #     x = rearrange(x, '(b h) s f d -> b s f (h d)', b=B)
+    #     x_diag = rearrange(x, 'b (g n) f d -> b g n f d', g=F)
+    #     x_diag = torch.diagonal(x_diag, dim1=-4, dim2=-2)
+    #     x_diag = rearrange(x_diag, f'b n d f -> b (f n) d', f=F)
+    #     q2 = self.proj_q(x_diag)
+    #     k2, v2 = self.proj_kv(x).chunk(2, dim=-1)
+    #     q2 = rearrange(q2, f'b s (h d) -> b h s d', h=h)
+    #     q2 *= self.scale
+    #     k2, v2 = map(
+    #         lambda t: rearrange(t, f'b s f (h d) -> b h s f d', f=F,  h=h), (k2, v2))
+    #     attn = torch.einsum('b h s d, b h s f d -> b h s f', q2, k2)
+    #     attn = attn.softmax(dim=-1)
+    #     if self.use_original_code:
+    #         x = rearrange(x, f'b s f (h d) -> b h s f d', f=F,  h=h)
+    #         x = torch.einsum('b h s f, b h s f d -> b h s d', attn, x)
+    #     else:
+    #         x = torch.einsum('b h s f, b h s f d -> b h s d', attn, v2)
+    #     x = rearrange(x, f'b h s d -> b s (h d)')
 
-        # concat back the cls token
-        x = torch.cat((cls_out, x), dim=1)
+    #     # concat back the cls token
+    #     x = torch.cat((cls_out, x), dim=1)
 
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x, attn
+    #     x = self.proj(x)
+    #     x = self.proj_drop(x)
+    #     return x, attn
 
 
 def _get_activation_fn(activation):
