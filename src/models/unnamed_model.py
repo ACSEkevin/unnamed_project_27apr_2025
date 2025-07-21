@@ -351,6 +351,7 @@ def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union
                 _validate_and_cover(key, src_key, False)
 
     model.load_state_dict(model_state_dict)
+    print("Model is partially initialized from DETR.")
 
     return model, initialized_param_names
 
