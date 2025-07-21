@@ -140,13 +140,15 @@ def main(args: argparse.Namespace):
                          d_model=args.hidden_dim, num_heads=args.nheads, 
                          num_encoder_layers=args.enc_layers, num_decoder_layers=args.dec_layers, 
                          dim_ffn=args.dim_feedforward, num_queries=args.num_queries, update_track_query_pos=args.update_track_pos,
+                         enc_use_temporal_attn=args.enc_use_temporal_attn,
                          backbone_name=args.backbone, freeze_backbone=freeze_backbone, backbone_dilation=args.dilation,
                          dropout=args.dropout, aux_output=args.no_aux_output)
     
     initialized_param_names = []
     if args.init_state: # True or class <str>
         path = None if isinstance(args.init_state, bool) else args.init_state
-        model, initialized_param_names = load_states_from_pretrained_detr(model, path, num_enc=args.enc_layers, num_dec=args.dec_layers, load_backbone_state=False)
+        model, initialized_param_names = load_states_from_pretrained_detr(model, path, num_enc=args.enc_layers, num_dec=args.dec_layers, 
+                                                                          load_backbone_state=True, skip_mismatch=True)
     model.to(device)
 
     model_without_ddp = model
