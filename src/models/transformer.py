@@ -23,8 +23,8 @@ class SpatialTemporalTransformer(nn.Module):
 
         encoder_layer = SpatialTemporalEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, enc_use_temporal_attn)
-        encoder_norm = nn.LayerNorm(d_model) if enc_use_temporal_attn else None
-        self.encoder = SpatialTemporalTransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+        
+        self.encoder = SpatialTemporalTransformerEncoder(encoder_layer, num_encoder_layers)
 
         decoder_layer = SpatialDecoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation)
