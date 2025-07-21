@@ -75,9 +75,9 @@ class MOT17DynamicDataset(Dataset):
             anno_path = self.video_infos[video_name]["anno_path"]
             img_h, img_w = [self.video_infos[video_name][name] for name in ["imHeight", "imWidth"]]
             img_paths = [self.video_infos[video_name]["img_paths"][i] for i in frame_indices]
-            imgs = [Image.open(path) for path in img_paths]
-
+            
             # FIXME: pseudo images， used for loader testing
+            imgs = [Image.open(path) for path in img_paths]
             # imgs = [
             #     Image.fromarray(
             #         np.random.randint(0, 256, size=[img_h, img_w, 3]).astype(np.uint8)
