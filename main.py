@@ -164,7 +164,7 @@ def main(args: argparse.Namespace):
             if "backbone" not in n and n not in initialized_param_names and p.requires_grad
         ]},
     ]
-    
+
     if not freeze_backbone:
         param_dicts.append({
             "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
@@ -173,7 +173,8 @@ def main(args: argparse.Namespace):
     
     if len(initialized_param_names) > 0: # partially initialized
         param_dicts.append({
-            "params": [p for n, p in model_without_ddp.named_parameters() if n in initialized_param_names]
+            "params": [p for n, p in model_without_ddp.named_parameters() if n in initialized_param_names],
+            "lr": args.lr * 0.1
         })
     
     # loss
