@@ -89,12 +89,13 @@ class MOT17DynamicDataset(Dataset):
             annos = annos[annos[:, 0].argsort()] # sort by frame FIXME: not necessary
             anno_list: list[dict] = []
 
-            for index in frame_indices:
+            for frame_idx in frame_indices:
                 anno_dict: dict[str, Union[torch.Tensor, int]] = {}
-                frame_annos = annos[np.logical_and(annos[:, 0] == index, annos[:, 6] == 1)]
+                frame_annos = annos[np.logical_and(annos[:, 0] == frame_idx + 1, annos[:, 6] == 1)]
                 
                 # x_min, y_min, w, h -> x_min, y_min, x_max, y_max
                 # T.Normalize() will convert to cxcywh and normalize boxes
+                area = frame_annos[:, 4] * frame_annos[:, 5]
                 frame_annos[:, 4] = (frame_annos[:, 2] + frame_annos[:, 4]).clip(0., img_w)
                 frame_annos[:, 5] = (frame_annos[:, 3] + frame_annos[:, 5]).clip(0., img_h)
                 # frame_annos[:, 4] /= img_w
@@ -104,7 +105,7 @@ class MOT17DynamicDataset(Dataset):
                 anno_dict["labels"] = torch.zeros(frame_annos.size(0)).long() # class id: 0
                 anno_dict["ids"] = frame_annos[:, 1].long()
                 anno_dict["boxes"] = frame_annos[:, 2:6]
-                anno_dict["area"] = frame_annos[:, 4] * frame_annos[:, 5]
+                anno_dict["area"] = torch.from_numpy(area).float()
                 anno_dict['org_size'] = torch.as_tensor([img_h, img_w])
 
                 # if self.mode in ["val", "test"]:
@@ -129,7 +130,7 @@ class MOT17DynamicDataset(Dataset):
                 name, info = self._parse_seq_info(video_path)
 
                 # img_paths = sorted([os.path.join(info["imDir"], name) for name in os.listdir(info["imDir"])])
-                img_paths = [f"{info['imDir']}/{i:06d}{info['imExt']}" for i in range(info["seqLength"])]
+                img_paths = [f"{info['imDir']}/{i:06d}{info['imExt']}" for i in range(1, info["seqLength"] + 1)]
                 slice_index = int(len(img_paths) * (1 - self.val_ratio))
                 if self.mode == "train":
                     img_paths = img_paths[:slice_index]
@@ -164,14 +165,14 @@ class MOT17DynamicDataset(Dataset):
         
         def _sample_imgs_for_one_sample(self):
             self.samples.clear()
-            start_index: int = np.random.randint(self.min_sample_interval, self.max_sample_interval)
+            start_index: int = np.random.randint(self.min_sample_interval, self.max_sample_interval + 1)
 
             for video_name, video_info in self.video_infos.items():
                 num_imgs = len(video_info["img_paths"])
 
                 if self.sample_interval_mode == "fixed":
                     indices = np.arange(num_imgs, dtype=np.int64)
-                    indices = indices[::self.max_sample_interval] # fixed interval sampling
+                    indices = indices[start_index::self.max_sample_interval] # fixed interval sampling
                 else: # random interval
                     intervals = np.random.randint(self.min_sample_interval, self.max_sample_interval + 1, [num_imgs]) # get intervals
                     indices = np.concatenate([[start_index], intervals]).cumsum() # cumsum to get indices
