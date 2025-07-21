@@ -254,6 +254,7 @@ def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union
     Returns:
     ---
         - model with initialized from DETR. Note that this is a in-place operation.
+        - a list of initialized parameter names (backbone param ot included)
     """
 
     # FIXME: parameterize url when there is a change of backbone (e.g. resnet101)
@@ -272,8 +273,9 @@ def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union
         detr_state_dict = detr_state_dict["model"]
 
     model_state_dict = model.state_dict()
+    initialized_param_names: list[str] = []
 
-    def _validate_and_cover(target_key: str, src_key: str):
+    def _validate_and_cover(target_key: str, src_key: str, record: bool = True):
         target_state, detr_state = model_state_dict[target_key], detr_state_dict[src_key]
 
         if not target_state.shape == detr_state.shape:
@@ -285,6 +287,9 @@ def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union
             warnings.warn(msg)
 
         model_state_dict[target_key] = detr_state
+
+        if record:
+            initialized_param_names.append(target_key)
         
         if verbose:
             print("loaded detr state: `{}` to model state: `{}`".format(src_key, target_key))
@@ -314,6 +319,7 @@ def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union
     
     misc_name_map: dict[str, str] = {
         "input_proj.{}": "input_proj.{}", # conv2d: feature to embedding projection
+        "transformer.decoder.norm.{}": "transformer.decoder.norm.{}",
         "head.box_branch.linear_layers.0.{}": "bbox_embed.layers.0.{}", # box ffn
         "head.box_branch.linear_layers.1.{}": "bbox_embed.layers.1.{}",
         "head.box_branch.linear_layers.2.{}": "bbox_embed.layers.2.{}",
@@ -342,11 +348,11 @@ def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union
         for key in model_state_dict.keys():
             if key.startswith("backbone"):
                 src_key = key.replace("backbone", "backbone.0")
-                _validate_and_cover(key, src_key)
+                _validate_and_cover(key, src_key, False)
 
     model.load_state_dict(model_state_dict)
 
-    return model
+    return model, initialized_param_names
 
 
 

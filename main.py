@@ -143,9 +143,10 @@ def main(args: argparse.Namespace):
                          backbone_name=args.backbone, freeze_backbone=freeze_backbone, backbone_dilation=args.dilation,
                          dropout=args.dropout, aux_output=args.no_aux_output)
     
+    initialized_param_names = []
     if args.init_state: # True or class <str>
         path = None if isinstance(args.init_state, bool) else args.init_state
-        model = load_states_from_pretrained_detr(model, path, num_enc=args.enc_layers, num_dec=args.dec_layers, load_backbone_state=False)
+        model, initialized_param_names = load_states_from_pretrained_detr(model, path, num_enc=args.enc_layers, num_dec=args.dec_layers, load_backbone_state=False)
     model.to(device)
 
     model_without_ddp = model
@@ -158,14 +159,22 @@ def main(args: argparse.Namespace):
     print("num of trainable params: {:.2f}M({:.1f}MB)".format(n_params / 1e6, ram))
 
     param_dicts = [
-        {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
+        {"params": [
+            p for n, p in model_without_ddp.named_parameters()
+            if "backbone" not in n and n not in initialized_param_names and p.requires_grad
+        ]},
     ]
+    
     if not freeze_backbone:
         param_dicts.append({
             "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
             "lr": args.lr_backbone,
         })
-    #FIXME: if init model from DETR, initialized parts should be set a smaller lr
+    
+    if len(initialized_param_names) > 0: # partially initialized
+        param_dicts.append({
+            "params": [p for n, p in model_without_ddp.named_parameters() if n in initialized_param_names]
+        })
     
     # loss
     loss_fn = CollectiveLoss(use_focal, args.focal_alpha, args.cls_coef, args.bbox_coef, args.giou_coef, args.obj_coef)
