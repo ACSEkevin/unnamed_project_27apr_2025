@@ -105,7 +105,7 @@ class GroundTruth:
             - index: specifies objects from frame index. in not given, return all objects from the video clip.
         """
         keys = ["labels", "ids", "boxes", "area"]
-        if index:
+        if index is not None:
             return torch.cat([self.annos[index][key].float() for key in keys], dim=1)
         
         return torch.cat(
