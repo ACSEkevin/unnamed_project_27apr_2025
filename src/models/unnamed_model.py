@@ -285,8 +285,8 @@ def load_states_from_pretrained_detr(model: UnnamedModel, detr_state_dict: Union
             if not skip_mismatch:
                 raise ValueError(msg)
             warnings.warn(msg)
-
-        model_state_dict[target_key] = detr_state
+        else:
+            model_state_dict[target_key] = detr_state
 
         if record:
             initialized_param_names.append(target_key)
