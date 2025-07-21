@@ -21,6 +21,7 @@ class UnnamedModel(nn.Module):
                  num_queries: int = 100,
                  update_track_query_pos: bool = True,
                  update_dropout: float = 0.1,
+                 enc_use_temporal_attn: float = False,
                  backbone_name: str = "resnet50",
                  freeze_backbone: bool = False,
                  backbone_dilation: bool = False,
@@ -35,6 +36,7 @@ class UnnamedModel(nn.Module):
         self.num_queries = num_queries
         self.aux_output = aux_output
         self.update_track_query_pos = update_track_query_pos
+        self.enc_use_temporal_attn = enc_use_temporal_attn
 
         # pos embeddings
         assert d_model % 2 == 0, "Hidden dimension must be divisible by 2."
@@ -56,7 +58,7 @@ class UnnamedModel(nn.Module):
         self.transformer = SpatialTemporalTransformer(
             num_frames, d_model, nhead=num_heads,
             num_encoder_layers=num_encoder_layers, num_decoder_layers=num_decoder_layers, dim_feedforward=dim_ffn,
-            dropout=dropout, activation="relu", enc_use_temporal_attn=True,
+            dropout=dropout, activation="relu", enc_use_temporal_attn=enc_use_temporal_attn,
             dec_return_intermediate=aux_output
         )
         self.head = Head(d_model, d_model, num_classes)

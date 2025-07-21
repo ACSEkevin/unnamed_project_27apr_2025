@@ -80,6 +80,8 @@ def get_args_parser():
                         help="Number of query slots")
     parser.add_argument('--update_track_pos', action='store_true', 
                         help="whether update position embeddings of inherited track queries.")
+    parser.add_argument('--enc_use_temporal_attn', action='store_true', 
+                        help="whether enable temporal attention in encoder layers.")
     parser.add_argument('--no_aux_output', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
     # NOTE: Deformable attn is not used in this project
